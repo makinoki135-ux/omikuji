@@ -3,11 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>お題シャッフル</title>
-
-<!-- LZ-String（共有データの圧縮/伸長に使用） -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/lz-string/1.4.4/lz-string.min.js" integrity="sha512-6rV8/cJqrr5fY5qUWbrB8Kfu2V0fDf+8C6u3tZL1j1+7zPA7m2Hq/2m/7rW9z8P1VhZf3zWdTnYw0FJr4jG5mQ==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-
+<title>なんでもシャッフル</title>
 <style>
   body { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans JP", sans-serif; background: #f5f5f5; margin: 0; padding: 16px; color: #222; }
   .wrap { max-width: 480px; margin: 0 auto; }
@@ -91,4 +87,338 @@
     </div>
   </section>
 
-  <!--
+  <!-- 画面B：抽選 -->
+  <section id="screen-draw" class="screen">
+    <h1>お題シャッフル</h1>
+
+    <div class="card">
+      <div class="result-box">
+        <div id="resultText" class="result-main">（まだスタートしていません）</div>
+        <div id="remainText" class="result-sub">残り - 回</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <button id="drawBtn" class="btn btn-main" style="width:100%;">スタート</button>
+    </div>
+
+    <div class="card">
+      <div class="row-flex">
+        <button id="backBtn"    class="btn btn-gray">リスト作成に戻る</button>
+        <button id="restartBtn" class="btn btn-gray">シャッフルをやり直す</button>
+        <button id="newListBtn" class="btn btn-gray">新しいリスト</button>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<!-- QRコードライブラリ -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+/* ===== DOM参照 ===== */
+const screenSetup   = document.getElementById("screen-setup");
+const screenDraw    = document.getElementById("screen-draw");
+
+const presetSelect  = document.getElementById("presetSelect");
+const listContainer = document.getElementById("listContainer");
+const addRowBtn     = document.getElementById("addRowBtn");
+const drawCountInput= document.getElementById("drawCountInput");
+const toDrawBtn     = document.getElementById("toDrawBtn");
+const shareBtn      = document.getElementById("shareBtn");
+
+const resultText    = document.getElementById("resultText");
+const remainText    = document.getElementById("remainText");
+const drawBtn       = document.getElementById("drawBtn");
+const backBtn       = document.getElementById("backBtn");
+const restartBtn    = document.getElementById("restartBtn");
+const newListBtn    = document.getElementById("newListBtn");
+
+// モーダル関連
+const qrModal       = document.getElementById("qrModal") || createQrModal();
+const qrCodeCanvas  = document.getElementById("qrCodeCanvas");
+const shareUrlBox   = document.getElementById("shareUrlBox");
+const closeModalBtn = document.getElementById("closeModalBtn");
+const copyLinkBtn   = document.getElementById("copyLinkBtn");
+const copyHint      = document.getElementById("copyHint");
+
+/* ===== 状態 ===== */
+let originalList = [];
+let workingPool = [];
+let remainingCount = 0;
+let drawLimit = 0;
+let savedListForRestart = [];
+
+/* ===== プリセット ===== */
+const PRESETS = {
+  omikuji: ["大吉","吉","中吉","小吉","凶","〇吉","〇吉"],
+  animal:  ["おおきさ","なきごえ","おもさ","すんでいるばしょ","におい","うごき","てざわり"],
+  idol:    ["色","人数","特技","身長","出身地","ヘアースタイル","性格"],
+  pref:    ["大きさ","都市/田舎","特産品","有名人","作品の舞台","歴史"]
+};
+
+/* ===== ユーティリティ ===== */
+// 入力1行
+function createRow(value="") {
+  const input = document.createElement("input");
+  input.type = "text";
+  input.value = value;
+  input.className = "list-input";
+  return input;
+}
+
+// 最低10行を確保
+function ensureRows() {
+  while (listContainer.children.length < 10) {
+    listContainer.appendChild(createRow(""));
+  }
+}
+
+// 入力から配列（空は除外）
+function readListFromInputs() {
+  const arr = [];
+  const inputs = listContainer.querySelectorAll("input.list-input");
+  inputs.forEach(inp => {
+    const v = inp.value.trim();
+    if (v !== "") arr.push(v);
+  });
+  return arr;
+}
+
+// 配列シャッフル
+function shuffleArray(src) {
+  const a = src.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+// 短縮URL（is.gd）—失敗時は元URLを返す
+async function shortenUrl(longUrl) {
+  try {
+    const res = await fetch(
+      "https://is.gd/create.php?format=simple&url=" + encodeURIComponent(longUrl),
+      { method: "GET" }
+    );
+    const text = (await res.text()).trim();
+    if (text.startsWith("http")) return text;
+    console.warn("URL短縮に失敗:", text);
+    return longUrl;
+  } catch (e) {
+    console.warn("URL短縮リクエストで例外:", e);
+    return longUrl;
+  }
+}
+
+// 共有用URL作成（?data=BASE64(JSON)）
+function makeShareLink() {
+  const listNow = readListFromInputs();
+  const payload = { list: listNow };
+  const json = JSON.stringify(payload);
+  const base64 = btoa(unescape(encodeURIComponent(json))); // UTF-8 → Base64
+  const baseUrl = window.location.origin + window.location.pathname;
+  return baseUrl + "?data=" + base64;
+}
+
+/* ===== 初期化 ===== */
+ensureRows();
+tryLoadSharedList();
+
+/* ===== 画面イベント ===== */
+// 行追加
+addRowBtn.addEventListener("click", () => {
+  listContainer.appendChild(createRow(""));
+});
+
+// プリセット読込
+presetSelect.addEventListener("change", () => {
+  const key = presetSelect.value;
+  if (!key) return;
+  const presetItems = PRESETS[key] || [];
+  listContainer.innerHTML = "";
+  presetItems.forEach(item => listContainer.appendChild(createRow(item)));
+  ensureRows();
+});
+
+// 抽選画面へ
+toDrawBtn.addEventListener("click", () => {
+  const listNow = readListFromInputs();
+  const count   = parseInt(drawCountInput.value, 10);
+
+  if (!listNow.length) { alert("リストが空です。1つ以上入力してください。"); return; }
+  if (!(count > 0))   { alert("抽選回数は1以上にしてください。"); return; }
+
+  originalList = listNow.slice();
+  savedListForRestart = listNow.slice();
+  drawLimit = count;
+  remainingCount = count;
+  workingPool = shuffleArray(originalList);
+
+  resultText.textContent = "（まだスタートしていません）";
+  remainText.textContent = "残り " + remainingCount + " 回";
+
+  screenSetup.classList.remove("active");
+  screenDraw.classList.add("active");
+});
+
+// 1回抽選
+function runDrawOnce() {
+  if (remainingCount <= 0) {
+    resultText.textContent = "終了！";
+    remainText.textContent = "残り 0 回";
+    return;
+  }
+  if (workingPool.length === 0) {
+    workingPool = shuffleArray(originalList);
+  }
+  const nextItem = workingPool.shift();
+  resultText.textContent = nextItem;
+
+  remainingCount -= 1;
+  remainText.textContent = "残り " + remainingCount + " 回";
+}
+drawBtn.addEventListener("click", runDrawOnce);
+
+// 抽選画面のボタンたち
+backBtn.addEventListener("click", () => {
+  screenDraw.classList.remove("active");
+  screenSetup.classList.add("active");
+});
+restartBtn.addEventListener("click", () => {
+  originalList = savedListForRestart.slice();
+  remainingCount = drawLimit;
+  workingPool = shuffleArray(originalList);
+  resultText.textContent = "（リセットしました）";
+  remainText.textContent = "残り " + remainingCount + " 回";
+});
+newListBtn.addEventListener("click", () => {
+  listContainer.innerHTML = "";
+  ensureRows();
+  presetSelect.value = "";
+  drawCountInput.value = "10";
+  screenDraw.classList.remove("active");
+  screenSetup.classList.add("active");
+});
+
+/* ===== 共有（短縮URL + QR生成 + モーダル）===== */
+shareBtn.addEventListener("click", async () => {
+  shareBtn.disabled = true;
+  const originalLabel = shareBtn.textContent;
+  shareBtn.textContent = "生成中…";
+
+  // まず長い共有URL
+  const shareLink = makeShareLink();
+
+  // ユーザーに進捗を表示
+  shareUrlBox.textContent = "短縮URLを作成中…";
+  qrCodeCanvas.innerHTML = "";
+  copyHint.textContent = "";
+
+  // 短縮（失敗時は元URL）
+  const shortUrl = await shortenUrl(shareLink);
+
+  // 表示更新
+  shareUrlBox.textContent = shortUrl;
+
+  // QRコード生成（短縮URLで）
+  try {
+    new QRCode(qrCodeCanvas, {
+      text: shortUrl,
+      width: 160,
+      height: 160,                 // ← ここにカンマ必須
+      correctLevel: QRCode.CorrectLevel.L
+    });
+  } catch (err) {
+    alert("QRコードの生成でエラーが出ました: " + err);
+  }
+
+  // モーダルを開く
+  qrModal.classList.add("active");
+
+  // ボタン戻す
+  shareBtn.textContent = originalLabel;
+  shareBtn.disabled = false;
+});
+
+// モーダル閉じる
+closeModalBtn.addEventListener("click", () => {
+  qrModal.classList.remove("active");
+});
+
+// リンクをクリップボードにコピー
+copyLinkBtn.addEventListener("click", async () => {
+  const textToCopy = shareUrlBox.textContent.trim();
+  try {
+    await navigator.clipboard.writeText(textToCopy);
+    copyHint.textContent = "コピーしました！";
+  } catch {
+    copyHint.textContent = "コピーできませんでした。長押しで選択→コピーしてください。";
+  }
+});
+
+/* ===== 共有URLから復元 ===== */
+function tryLoadSharedList() {
+  const params = new URLSearchParams(window.location.search);
+  if (!params.has("data")) { ensureRows(); return; }
+
+  const base64 = params.get("data");
+  try {
+    const jsonStr = decodeURIComponent(escape(atob(base64)));
+    const obj = JSON.parse(jsonStr);
+    listContainer.innerHTML = "";
+    if (obj && Array.isArray(obj.list) && obj.list.length) {
+      obj.list.forEach(item => listContainer.appendChild(createRow(item)));
+    }
+    ensureRows();
+  } catch (e) {
+    console.warn("共有データの読み込みに失敗しました:", e);
+    ensureRows();
+  }
+}
+
+/* ===== 必要ならモーダルDOMを自動生成 ===== */
+function createQrModal() {
+  const tpl = document.createElement("div");
+  tpl.innerHTML = `
+  <div id="qrModal" class="modal-overlay">
+    <div class="modal-card">
+      <div class="modal-title">このリストを共有</div>
+      <div class="qr-wrap">
+        <div id="qrCodeCanvas"></div>
+        <div class="share-url-box" id="shareUrlBox"></div>
+      </div>
+      <div class="modal-btn-row">
+        <button id="copyLinkBtn" class="copy-btn">リンクをコピー</button>
+        <button id="closeModalBtn" class="close-btn">閉じる</button>
+      </div>
+      <div class="copy-hint" id="copyHint"></div>
+    </div>
+  </div>`;
+  document.body.appendChild(tpl.firstElementChild);
+  return document.getElementById("qrModal");
+}
+}); // DOMContentLoaded
+</script>
+
+<!-- モーダル（QR表示）—上のJSは存在しなければ自動生成しますが、基本はHTMLに置いておくのが安全です -->
+<div id="qrModal" class="modal-overlay">
+  <div class="modal-card">
+    <div class="modal-title">このリストを共有</div>
+    <div class="qr-wrap">
+      <div id="qrCodeCanvas"></div>
+      <div class="share-url-box" id="shareUrlBox"></div>
+    </div>
+    <div class="modal-btn-row">
+      <button id="copyLinkBtn" class="copy-btn">リンクをコピー</button>
+      <button id="closeModalBtn" class="close-btn">閉じる</button>
+    </div>
+    <div class="copy-hint" id="copyHint"></div>
+  </div>
+</div>
+
+</body>
+</html>
