@@ -1,43 +1,180 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>公平な抽選アプリ</title>
-    <link rel="stylesheet" href="style.css">
-    <script src="https://cdn.rawgit.com/davidshimjs/qrcodejs/gh-pages/qrcode.min.js"></script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>お題シャッフル</title>
+<style>
+  body { font-family: system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans JP",sans-serif; background:#f5f5f5; margin:0; padding:16px; color:#222; }
+  .wrap { max-width:480px; margin:0 auto; }
+  h1 { font-size:1.2rem; font-weight:600; margin:0 0 12px; text-align:center; }
+  .card { background:#fff; border-radius:12px; border:1px solid #ddd; padding:16px; box-shadow:0 10px 30px rgba(0,0,0,0.05); margin-bottom:16px; }
+  label { font-size:.9rem; font-weight:600; display:block; margin-bottom:6px; }
+  select,input[type="text"],input[type="number"] { width:100%; box-sizing:border-box; font-size:1rem; padding:8px 10px; margin-bottom:8px; border-radius:8px; border:1px solid #ccc; }
+  .row-flex { display:flex; gap:8px; flex-wrap:wrap; }
+  .btn { flex:1; font-size:.95rem; font-weight:600; padding:10px 12px; border-radius:8px; border:none; cursor:pointer; }
+  .btn-main { background:#2563eb; color:#fff; }
+  .btn-gray { background:#eee; color:#222; }
+  .btn-outline { background:#fff; color:#2563eb; border:2px solid #2563eb; }
+  .hint { font-size:.75rem; color:#666; margin-top:-4px; margin-bottom:12px; }
+
+  .result-box { background:#e8f0ff; border:2px solid #2563eb; border-radius:12px; padding:20px 12px; text-align:center; min-height:70px; display:flex; flex-direction:column; justify-content:center; }
+  .result-main { font-size:1.3rem; font-weight:700; color:#2563eb; word-break:break-word; }
+  .result-sub { font-size:.8rem; color:#555; margin-top:8px; }
+
+  .screen { display:none; }
+  .screen.active { display:block; }
+
+  .list-area { display:grid; grid-template-columns:1fr; gap:6px; margin-bottom:8px; }
+  .add-btn-row { text-align:right; margin-bottom:8px; }
+  .add-btn-row button { font-size:.8rem; padding:6px 10px; border-radius:6px; border:1px solid #aaa; background:#fafafa; cursor:pointer; }
+
+  .modal-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.4); display:none; align-items:center; justify-content:center; padding:16px; z-index:9999; }
+  .modal-overlay.active { display:flex; }
+  .modal-card { background:#fff; width:100%; max-width:320px; border-radius:12px; border:1px solid #ddd; box-shadow:0 20px 40px rgba(0,0,0,0.3); padding:16px; text-align:center; }
+  .modal-title { font-size:1rem; font-weight:600; margin-bottom:8px; }
+  .qr-wrap { display:flex; flex-direction:column; align-items:center; justify-content:center; background:#fafafa; border:1px solid #ccc; border-radius:8px; padding:12px; margin-bottom:12px; }
+  #qrCodeCanvas { margin-bottom:8px; }
+  .share-url-box { font-size:.7rem; color:#444; word-break:break-all; background:#fff; border:1px solid #ccc; border-radius:6px; padding:8px; max-height:4.5em; overflow:auto; text-align:left; margin-bottom:12px; }
+  .modal-btn-row { display:flex; gap:8px; }
+  .close-btn,.copy-btn { flex:1; border:none; border-radius:8px; padding:10px 12px; font-size:.9rem; font-weight:600; cursor:pointer; }
+  .close-btn { background:#eee; }
+  .copy-btn { background:#2563eb; color:#fff; }
+  .copy-hint { font-size:.7rem; color:#2563eb; min-height:1em; margin-top:4px; text-align:center; }
+</style>
 </head>
 <body>
-    <div class="container">
-        <h1>公平な抽選アプリ</h1>
-        
-        <div class="result-box">
-            <h2>🎉 当選者 🎉</h2>
-            <p id="winner">「抽選開始」ボタンを押してください</p>
-        </div>
-        
-        <button id="drawButton">抽選開始</button>
+<div class="wrap">
+  <section id="screen-setup" class="screen active">
+    <h1>リスト作成</h1>
 
-        <hr>
-
-        <h2>参加者リスト</h2>
-
-        <div id="listInputContainer">
-            <textarea id="listInput" rows="10" placeholder="参加者名を1行に1人ずつ入力してください"></textarea>
-            <button id="saveList">リストを保存</button>
-        </div>
-
-        <ul id="listDisplay">
-            </ul>
-
-        <hr>
-
-        <h2>リストを共有</h2>
-        <p>このリストを他の人と共有できます：</p>
-        <div id="qrcode"></div>
-        <input type="text" id="shareURL" readonly>
+    <div class="card">
+      <label for="presetSelect">プリセットを読み込む</label>
+      <select id="presetSelect">
+        <option value="">選択してください</option>
+        <option value="omikuji">おみくじ</option>
+        <option value="animal">どうぶつ当てクイズ</option>
+        <option value="idol">アイドル当てクイズ</option>
+        <option value="pref">都道府県当てクイズ</option>
+      </select>
+      <div class="hint">選ぶと下の入力欄が書き換わります。あとで編集できます。</div>
     </div>
 
-    <script src="script.js"></script>
+    <div class="card">
+      <label>お題リスト（1行1つ）</label>
+      <div class="add-btn-row"><button id="addRowBtn">＋ 行を追加</button></div>
+      <div id="listContainer" class="list-area"></div>
+      <div class="hint">初期状態では10行用意します。空欄は無視されます。</div>
+    </div>
+
+    <div class="card">
+      <label for="drawCountInput">抽選回数</label>
+      <input id="drawCountInput" type="number" min="1" value="10">
+    </div>
+
+    <div class="card">
+      <div class="row-flex">
+        <button id="toDrawBtn" class="btn btn-main">シャッフル画面へ</button>
+        <button id="shareBtn" class="btn btn-outline">このリストを共有</button>
+      </div>
+    </div>
+  </section>
+
+  <section id="screen-draw" class="screen">
+    <h1>お題シャッフル</h1>
+    <div class="card">
+      <div class="result-box">
+        <div id="resultText" class="result-main">（まだスタートしていません）</div>
+        <div id="remainText" class="result-sub">残り - 回</div>
+      </div>
+    </div>
+    <div class="card"><button id="drawBtn" class="btn btn-main" style="width:100%;">スタート</button></div>
+    <div class="card">
+      <div class="row-flex">
+        <button id="backBtn" class="btn btn-gray">リスト作成に戻る</button>
+        <button id="restartBtn" class="btn btn-gray">シャッフルをやり直す</button>
+        <button id="newListBtn" class="btn btn-gray">新しいリスト</button>
+      </div>
+    </div>
+  </section>
+</div>
+
+<!-- モーダル -->
+<div id="qrModal" class="modal-overlay">
+  <div class="modal-card">
+    <div class="modal-title">このリストを共有</div>
+    <div class="qr-wrap">
+      <div id="qrCodeCanvas"></div>
+      <div class="share-url-box" id="shareUrlBox"></div>
+    </div>
+    <div class="modal-btn-row">
+      <button id="copyLinkBtn" class="copy-btn">リンクをコピー</button>
+      <button id="closeModalBtn" class="close-btn">閉じる</button>
+    </div>
+    <div class="copy-hint" id="copyHint"></div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+  const presetSelect=document.getElementById("presetSelect");
+  const listContainer=document.getElementById("listContainer");
+  const addRowBtn=document.getElementById("addRowBtn");
+  const drawCountInput=document.getElementById("drawCountInput");
+  const toDrawBtn=document.getElementById("toDrawBtn");
+  const shareBtn=document.getElementById("shareBtn");
+  const resultText=document.getElementById("resultText");
+  const remainText=document.getElementById("remainText");
+  const drawBtn=document.getElementById("drawBtn");
+  const backBtn=document.getElementById("backBtn");
+  const restartBtn=document.getElementById("restartBtn");
+  const newListBtn=document.getElementById("newListBtn");
+  const screenSetup=document.getElementById("screen-setup");
+  const screenDraw=document.getElementById("screen-draw");
+
+  const qrModal=document.getElementById("qrModal");
+  const qrCodeCanvas=document.getElementById("qrCodeCanvas");
+  const shareUrlBox=document.getElementById("shareUrlBox");
+  const closeModalBtn=document.getElementById("closeModalBtn");
+  const copyLinkBtn=document.getElementById("copyLinkBtn");
+  const copyHint=document.getElementById("copyHint");
+
+  const PRESETS={
+    omikuji:["大吉","吉","中吉","小吉","凶"],
+    animal:["おおきさ","なきごえ","すんでいるばしょ","におい","うごき"],
+    idol:["色","人数","特技","身長","出身地"],
+    pref:["大きさ","都市/田舎","特産品","有名人","歴史"]
+  };
+  let originalList=[],workingPool=[],remainingCount=0,drawLimit=0,savedListForRestart=[];
+
+  function createRow(v=""){const i=document.createElement("input");i.type="text";i.value=v;i.className="list-input";return i;}
+  function ensureRows(){while(listContainer.children.length<10){listContainer.appendChild(createRow(""));}}
+
+  function readList(){const a=[];listContainer.querySelectorAll("input").forEach(i=>{const v=i.value.trim();if(v)a.push(v)});return a;}
+  function shuffle(a){const b=a.slice();for(let i=b.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[b[i],b[j]]=[b[j],b[i]];}return b;}
+
+  async function shortenUrl(u){try{const r=await fetch("https://is.gd/create.php?format=simple&url="+encodeURIComponent(u));const t=(await r.text()).trim();return t.startsWith("http")?t:u;}catch{return u;}}
+
+  function makeShareLink(){const j=JSON.stringify({list:readList()});const b=btoa(unescape(encodeURIComponent(j)));return location.origin+location.pathname+"?data="+b;}
+
+  ensureRows();loadShared();
+
+  addRowBtn.onclick=()=>listContainer.appendChild(createRow(""));
+  presetSelect.onchange=()=>{const k=presetSelect.value;if(!k)return;listContainer.innerHTML="";(PRESETS[k]||[]).forEach(x=>listContainer.appendChild(createRow(x)));ensureRows();};
+
+  toDrawBtn.onclick=()=>{const l=readList();const c=parseInt(drawCountInput.value||"0",10);if(!l.length)return alert("リストが空です");if(c<1)return alert("抽選回数は1以上に");originalList=l.slice();savedListForRestart=l.slice();drawLimit=c;remainingCount=c;workingPool=shuffle(originalList);resultText.textContent="（まだスタートしていません）";remainText.textContent="残り "+remainingCount+" 回";screenSetup.classList.remove("active");screenDraw.classList.add("active");};
+  drawBtn.onclick=()=>{if(remainingCount<=0){resultText.textContent="終了！";remainText.textContent="残り0回";return;}if(!workingPool.length)workingPool=shuffle(originalList);const n=workingPool.shift();resultText.textContent=n;remainingCount--;remainText.textContent="残り "+remainingCount+" 回";};
+  backBtn.onclick=()=>{screenDraw.classList.remove("active");screenSetup.classList.add("active");};
+  restartBtn.onclick=()=>{originalList=savedListForRestart.slice();remainingCount=drawLimit;workingPool=shuffle(originalList);resultText.textContent="（リセットしました）";remainText.textContent="残り "+remainingCount+" 回";};
+  newListBtn.onclick=()=>{listContainer.innerHTML="";ensureRows();presetSelect.value="";drawCountInput.value="10";screenDraw.classList.remove("active");screenSetup.classList.add("active");};
+
+  shareBtn.onclick=async()=>{shareUrlBox.textContent="短縮URL作成中…";qrCodeCanvas.innerHTML="";const u=makeShareLink();const s=await shortenUrl(u);shareUrlBox.textContent=s;new QRCode(qrCodeCanvas,{text:s,width:160,height:160,correctLevel:QRCode.CorrectLevel.L});qrModal.classList.add("active");};
+  closeModalBtn.onclick=()=>qrModal.classList.remove("active");
+  copyLinkBtn.onclick=async()=>{try{await navigator.clipboard.writeText(shareUrlBox.textContent.trim());copyHint.textContent="コピーしました！";}catch{copyHint.textContent="コピーできません。";}};
+
+  function loadShared(){const p=new URLSearchParams(location.search);if(!p.has("data"))return;try{const j=decodeURIComponent(escape(atob(p.get("data"))));const o=JSON.parse(j);listContainer.innerHTML="";(o.list||[]).forEach(x=>listContainer.appendChild(createRow(x)));ensureRows();}catch{ensureRows();}}
+});
+</script>
 </body>
 </html>
