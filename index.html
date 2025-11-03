@@ -13,6 +13,7 @@
   select, input[type="text"], input[type="number"] { width: 100%; box-sizing: border-box; font-size: 1rem; padding: 8px 10px; margin-bottom: 8px; border-radius: 8px; border: 1px solid #ccc; }
   .row-flex { display: flex; gap: 8px; flex-wrap: wrap; }
   .btn { flex: 1; font-size: .95rem; font-weight: 600; padding: 10px 12px; border-radius: 8px; border: none; cursor: pointer; }
+  .btn[disabled] { opacity: .6; cursor: not-allowed; }
   .btn-main { background: #2563eb; color: #fff; }
   .btn-gray { background: #eee; color: #222; }
   .btn-outline { background: #fff; color: #2563eb; border: 2px solid #2563eb; }
@@ -29,6 +30,7 @@
   .add-btn-row { text-align: right; margin-bottom: 8px; }
   .add-btn-row button { font-size: .8rem; padding: 6px 10px; border-radius: 6px; border: 1px solid #aaa; background: #fafafa; cursor: pointer; }
 
+  /* モーダル（QR表示用） */
   .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); display: none; align-items: center; justify-content: center; padding:16px; box-sizing:border-box; z-index:9999; }
   .modal-overlay.active { display:flex; }
   .modal-card { background:#fff; width:100%; max-width:320px; border-radius:12px; border:1px solid #ddd; box-shadow:0 20px 40px rgba(0,0,0,0.3); padding:16px; text-align:center; }
@@ -116,7 +118,7 @@
 
 <script>
 document.addEventListener('DOMContentLoaded', () => {
-/* 状態管理 */
+/* ===== DOM参照 ===== */
 const screenSetup   = document.getElementById("screen-setup");
 const screenDraw    = document.getElementById("screen-draw");
 
@@ -135,21 +137,21 @@ const restartBtn    = document.getElementById("restartBtn");
 const newListBtn    = document.getElementById("newListBtn");
 
 // モーダル関連
-const qrModal       = document.getElementById("qrModal");
+const qrModal       = document.getElementById("qrModal") || createQrModal();
 const qrCodeCanvas  = document.getElementById("qrCodeCanvas");
 const shareUrlBox   = document.getElementById("shareUrlBox");
 const closeModalBtn = document.getElementById("closeModalBtn");
 const copyLinkBtn   = document.getElementById("copyLinkBtn");
 const copyHint      = document.getElementById("copyHint");
 
-// 状態変数
+/* ===== 状態 ===== */
 let originalList = [];
 let workingPool = [];
 let remainingCount = 0;
 let drawLimit = 0;
 let savedListForRestart = [];
 
-// プリセット
+/* ===== プリセット ===== */
 const PRESETS = {
   omikuji: ["大吉","吉","中吉","小吉","凶","〇吉","〇吉"],
   animal:  ["おおきさ","なきごえ","おもさ","すんでいるばしょ","におい","うごき","てざわり"],
@@ -157,7 +159,8 @@ const PRESETS = {
   pref:    ["大きさ","都市/田舎","特産品","有名人","作品の舞台","歴史"]
 };
 
-// 入力用1行
+/* ===== ユーティリティ ===== */
+// 入力1行
 function createRow(value="") {
   const input = document.createElement("input");
   input.type = "text";
@@ -173,9 +176,59 @@ function ensureRows() {
   }
 }
 
-// 初期表示で10行用意
-ensureRows();
+// 入力から配列（空は除外）
+function readListFromInputs() {
+  const arr = [];
+  const inputs = listContainer.querySelectorAll("input.list-input");
+  inputs.forEach(inp => {
+    const v = inp.value.trim();
+    if (v !== "") arr.push(v);
+  });
+  return arr;
+}
 
+// 配列シャッフル
+function shuffleArray(src) {
+  const a = src.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+// 短縮URL（is.gd）—失敗時は元URLを返す
+async function shortenUrl(longUrl) {
+  try {
+    const res = await fetch(
+      "https://is.gd/create.php?format=simple&url=" + encodeURIComponent(longUrl),
+      { method: "GET" }
+    );
+    const text = (await res.text()).trim();
+    if (text.startsWith("http")) return text;
+    console.warn("URL短縮に失敗:", text);
+    return longUrl;
+  } catch (e) {
+    console.warn("URL短縮リクエストで例外:", e);
+    return longUrl;
+  }
+}
+
+// 共有用URL作成（?data=BASE64(JSON)）
+function makeShareLink() {
+  const listNow = readListFromInputs();
+  const payload = { list: listNow };
+  const json = JSON.stringify(payload);
+  const base64 = btoa(unescape(encodeURIComponent(json))); // UTF-8 → Base64
+  const baseUrl = window.location.origin + window.location.pathname;
+  return baseUrl + "?data=" + base64;
+}
+
+/* ===== 初期化 ===== */
+ensureRows();
+tryLoadSharedList();
+
+/* ===== 画面イベント ===== */
 // 行追加
 addRowBtn.addEventListener("click", () => {
   listContainer.appendChild(createRow(""));
@@ -190,27 +243,6 @@ presetSelect.addEventListener("change", () => {
   presetItems.forEach(item => listContainer.appendChild(createRow(item)));
   ensureRows();
 });
-
-// 入力フィールドから配列取得（空は除く）
-function readListFromInputs() {
-  const arr = [];
-  const inputs = listContainer.querySelectorAll("input.list-input");
-  inputs.forEach(inp => {
-    const v = inp.value.trim();
-    if (v !== "") arr.push(v);
-  });
-  return arr;
-}
-
-// シャッフル
-function shuffleArray(src) {
-  const a = src.slice();
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [a[i], a[j]] = [a[j], a[i]];
-  }
-  return a;
-}
 
 // 抽選画面へ
 toDrawBtn.addEventListener("click", () => {
@@ -272,33 +304,44 @@ newListBtn.addEventListener("click", () => {
   screenSetup.classList.add("active");
 });
 
-/* ==== 共有URL + QR ==== */
-function makeShareLink() {
-  const listNow = readListFromInputs();
-  const payload = { list: listNow };
-  const json = JSON.stringify(payload);
-  const base64 = btoa(unescape(encodeURIComponent(json)));
-  const baseUrl = window.location.origin + window.location.pathname;
-  return baseUrl + "?data=" + base64;
-}
+/* ===== 共有（短縮URL + QR生成 + モーダル）===== */
+shareBtn.addEventListener("click", async () => {
+  shareBtn.disabled = true;
+  const originalLabel = shareBtn.textContent;
+  shareBtn.textContent = "生成中…";
 
-shareBtn.addEventListener("click", () => {
+  // まず長い共有URL
   const shareLink = makeShareLink();
-  shareUrlBox.textContent = shareLink;
 
+  // ユーザーに進捗を表示
+  shareUrlBox.textContent = "短縮URLを作成中…";
   qrCodeCanvas.innerHTML = "";
+  copyHint.textContent = "";
+
+  // 短縮（失敗時は元URL）
+  const shortUrl = await shortenUrl(shareLink);
+
+  // 表示更新
+  shareUrlBox.textContent = shortUrl;
+
+  // QRコード生成（短縮URLで）
   try {
     new QRCode(qrCodeCanvas, {
-      text: shareLink,
+      text: shortUrl,
       width: 160,
-      height: 160,                 // ← 修正：カンマ追加
+      height: 160,                 // ← ここにカンマ必須
       correctLevel: QRCode.CorrectLevel.L
     });
   } catch (err) {
     alert("QRコードの生成でエラーが出ました: " + err);
   }
-  copyHint.textContent = "";
+
+  // モーダルを開く
   qrModal.classList.add("active");
+
+  // ボタン戻す
+  shareBtn.textContent = originalLabel;
+  shareBtn.disabled = false;
 });
 
 // モーダル閉じる
@@ -317,26 +360,65 @@ copyLinkBtn.addEventListener("click", async () => {
   }
 });
 
-/* ==== 共有URLからの復元 ==== */
+/* ===== 共有URLから復元 ===== */
 function tryLoadSharedList() {
   const params = new URLSearchParams(window.location.search);
-  if (!params.has("data")) return;
+  if (!params.has("data")) { ensureRows(); return; }
 
   const base64 = params.get("data");
   try {
     const jsonStr = decodeURIComponent(escape(atob(base64)));
     const obj = JSON.parse(jsonStr);
-    if (obj && Array.isArray(obj.list)) {
-      listContainer.innerHTML = "";
+    listContainer.innerHTML = "";
+    if (obj && Array.isArray(obj.list) && obj.list.length) {
       obj.list.forEach(item => listContainer.appendChild(createRow(item)));
-      ensureRows();
     }
+    ensureRows();
   } catch (e) {
     console.warn("共有データの読み込みに失敗しました:", e);
+    ensureRows();
   }
 }
-tryLoadSharedList();
+
+/* ===== 必要ならモーダルDOMを自動生成 ===== */
+function createQrModal() {
+  const tpl = document.createElement("div");
+  tpl.innerHTML = `
+  <div id="qrModal" class="modal-overlay">
+    <div class="modal-card">
+      <div class="modal-title">このリストを共有</div>
+      <div class="qr-wrap">
+        <div id="qrCodeCanvas"></div>
+        <div class="share-url-box" id="shareUrlBox"></div>
+      </div>
+      <div class="modal-btn-row">
+        <button id="copyLinkBtn" class="copy-btn">リンクをコピー</button>
+        <button id="closeModalBtn" class="close-btn">閉じる</button>
+      </div>
+      <div class="copy-hint" id="copyHint"></div>
+    </div>
+  </div>`;
+  document.body.appendChild(tpl.firstElementChild);
+  return document.getElementById("qrModal");
+}
 }); // DOMContentLoaded
 </script>
+
+<!-- モーダル（QR表示）—上のJSは存在しなければ自動生成しますが、基本はHTMLに置いておくのが安全です -->
+<div id="qrModal" class="modal-overlay">
+  <div class="modal-card">
+    <div class="modal-title">このリストを共有</div>
+    <div class="qr-wrap">
+      <div id="qrCodeCanvas"></div>
+      <div class="share-url-box" id="shareUrlBox"></div>
+    </div>
+    <div class="modal-btn-row">
+      <button id="copyLinkBtn" class="copy-btn">リンクをコピー</button>
+      <button id="closeModalBtn" class="close-btn">閉じる</button>
+    </div>
+    <div class="copy-hint" id="copyHint"></div>
+  </div>
+</div>
+
 </body>
 </html>
